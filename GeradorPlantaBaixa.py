@@ -25,7 +25,7 @@ CORES = {
 class CroquiApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Gerador de Croqui - V20.2 (Plano Cartesiano e Texto Fluido)")
+        self.root.title("Gerador de Croqui - V20.5 (Versão Estável e Clean)")
         
         # Plano cartesiano imenso (8000x8000) centrado no (0,0)
         self.cw = self.ch = 8000
@@ -50,18 +50,21 @@ class CroquiApp:
         self.historico = []
         self.futuro = []
         self.aguardando_a = False 
+        
+        # Controladores da janela de texto única
+        self.janela_texto_ativa = None
+        self.salvar_texto_ativo = None
 
         # --- LAYOUT ---
-        self.frame_ferramentas = tk.Frame(root, bg="#e0e0e0", width=170)
+        self.frame_ferramentas = tk.Frame(root, width=180)
         self.frame_ferramentas.pack(side=tk.LEFT, fill=tk.Y)
         
         self.frame_canvas = tk.Frame(root)
-        self.frame_canvas.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH, padx=5, pady=5)
+        self.frame_canvas.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH, padx=0, pady=0)
 
         self.canvas = tk.Canvas(self.frame_canvas, bg=self.tema_atual['fundo'], cursor="crosshair", highlightthickness=0)
         self.canvas.pack(expand=True, fill=tk.BOTH)
         
-        # As coordenadas de scroll agora aceitam valores negativos para formar os quadrantes
         self.canvas.config(scrollregion=(self.cx_min, self.cy_min, self.cx_max, self.cy_max))
 
         self.criar_botoes_ferramentas()
@@ -85,65 +88,114 @@ class CroquiApp:
         self.root.bind("<space>", self.inverter_porta)
         self.root.bind("<Key>", self.gerenciar_atalhos)
         
-        # CORREÇÃO: Usando self.root.after ao invés de self.after
         self.root.after(100, self.arranque_acelerado)
 
     def arranque_acelerado(self):
         try:
-            # CORREÇÃO: Usando self.root.state ao invés de self.state
             self.root.state('zoomed')
         except:
             pass
-        
         self.root.update_idletasks() 
-        
-        # Matemágica para mover a câmera exatamente para o centro (0,0)
         w = self.canvas.winfo_width()
         h = self.canvas.winfo_height()
-        
         x_frac = 0.5 - (w / (2 * self.cw))
         y_frac = 0.5 - (h / (2 * self.ch))
-        
         self.canvas.xview_moveto(x_frac)
         self.canvas.yview_moveto(y_frac)
 
     def criar_botoes_ferramentas(self):
-        bg_btn = "#e0e0e0"
-        btn_w = 23
+        bg_panel = "#f0f0f0" 
+        bg_hover = "#e0e0e0" 
+        fg_text = "#333333"  
+        font_ui = ("Segoe UI", 10) 
         
-        tk.Label(self.frame_ferramentas, text="AÇÕES", bg=bg_btn, font=("Arial", 9, "bold")).pack(pady=(15,5))
-        frame_undo_redo = tk.Frame(self.frame_ferramentas, bg=bg_btn)
-        frame_undo_redo.pack(pady=2, padx=5)
-        tk.Button(frame_undo_redo, text="⬅️", command=self.desfazer_acao, width=5).pack(side=tk.LEFT, padx=2)
-        tk.Button(frame_undo_redo, text="➡️", command=self.refazer_acao, width=5).pack(side=tk.LEFT, padx=2)
+        self.frame_ferramentas.config(bg=bg_panel)
 
-        tk.Label(self.frame_ferramentas, text="FERRAMENTAS", bg=bg_btn, font=("Arial", 9, "bold")).pack(pady=(15,5))
-        
-        tk.Button(self.frame_ferramentas, text="✏️ Parede (WA)", command=lambda: self.set_ferramenta('linha'), width=btn_w, anchor="w").pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="📏 Linha Fina (L)", command=lambda: self.set_ferramenta('linha_fina'), width=btn_w, anchor="w").pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="✂️ Tracejada (D)", command=lambda: self.set_ferramenta('linha_tracejada'), width=btn_w, anchor="w").pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="🚪 Porta (P)", command=lambda: self.set_ferramenta('porta'), width=btn_w, anchor="w", bg="#e2e3e5").pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="🌀 Escada Caracol (E)", command=lambda: self.set_ferramenta('escada_caracol'), width=btn_w, anchor="w", bg="#e2e3e5").pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="🔪 Trim (C)", command=lambda: self.set_ferramenta('trim'), width=btn_w, anchor="w", bg="#f8d7da").pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="🔤 Texto (T)", command=lambda: self.set_ferramenta('texto'), width=btn_w, anchor="w").pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="✋ Mover Objeto (M)", command=lambda: self.set_ferramenta('mover_objeto'), width=btn_w, anchor="w").pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="🧼 Borracha (B)", command=lambda: self.set_ferramenta('borracha'), width=btn_w, anchor="w").pack(pady=2)
-        
-        tk.Label(self.frame_ferramentas, text="PRANCHETA", bg=bg_btn, font=("Arial", 9, "bold")).pack(pady=(15, 5))
-        self.btn_ortogonal = tk.Button(self.frame_ferramentas, text="📐 Trava 90° (F7): ON", command=self.alternar_ortogonal, width=btn_w, anchor="w", bg="#d1e7dd")
-        self.btn_ortogonal.pack(pady=2)
-        self.btn_grid = tk.Button(self.frame_ferramentas, text="🌐 Malha: ON", command=self.alternar_malha, width=btn_w, anchor="w")
-        self.btn_grid.pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="➕ Expandir (Shift +)", command=lambda: self.redimensionar_tela(2000), width=btn_w, anchor="w").pack(pady=2)
-        tk.Button(self.frame_ferramentas, text="🌗 Modo Noturno", command=self.alternar_modo_noturno, width=btn_w, anchor="w").pack(pady=2)
-        
-        tk.Button(self.frame_ferramentas, text="💾 Exportar PNG", command=self.exportar_png, width=btn_w, anchor="w", bg="#fff3cd").pack(pady=(20, 2))
-        tk.Button(self.frame_ferramentas, text="🗑️ Limpar Tudo", command=self.limpar_tudo, width=btn_w, anchor="w", fg="red").pack(pady=2)
-        
-        dicas = "Mover: Arrasta blocos ou paredes.\nTracejada: Pressione D.\nTrim: Arraste p/ cortar.\nPorta: Espaço inverte."
-        tk.Label(self.frame_ferramentas, text=dicas, bg=bg_btn, font=("Arial", 8), fg="#555555", justify=tk.LEFT).pack(side=tk.BOTTOM, pady=10)
+        def add_flat_button(parent, text, icon, command, fg_color=fg_text):
+            frame = tk.Frame(parent, bg=bg_panel)
+            frame.pack(fill=tk.X, pady=2, padx=8) 
+            
+            lbl_icon = tk.Label(frame, text=icon, bg=bg_panel, fg=fg_color, font=("Segoe UI Emoji", 11))
+            lbl_icon.pack(side=tk.LEFT, padx=(2, 6))
+            
+            btn_text = tk.Button(frame, text=text, command=command, 
+                                 bg=bg_panel, activebackground=bg_hover,
+                                 fg=fg_color, relief="flat", bd=0,
+                                 font=font_ui, anchor="w", cursor="hand2")
+            btn_text.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+            
+            lbl_icon.bind("<Button-1>", lambda e: command())
+            for widget in [frame, lbl_icon, btn_text]:
+                widget.bind("<Enter>", lambda e, f=frame, l=lbl_icon, b=btn_text: (f.config(bg=bg_hover), l.config(bg=bg_hover), b.config(bg=bg_hover)))
+                widget.bind("<Leave>", lambda e, f=frame, l=lbl_icon, b=btn_text: (f.config(bg=bg_panel), l.config(bg=bg_panel), b.config(bg=bg_panel)))
 
-    # --- GERENCIADOR DE ATALHOS ---
+        def add_separator(parent):
+            tk.Frame(parent, height=1, bg="#d0d0d0").pack(fill=tk.X, pady=12, padx=15)
+
+        # --- AÇÕES (Undo/Redo) ---
+        frame_undo_redo = tk.Frame(self.frame_ferramentas, bg=bg_panel)
+        frame_undo_redo.pack(pady=(20, 5), padx=8, fill=tk.X)
+        
+        for text, cmd in [("⟲", self.desfazer_acao), ("⟳", self.refazer_acao)]:
+            btn = tk.Button(frame_undo_redo, text=text, command=cmd,
+                            bg=bg_panel, activebackground=bg_hover, fg=fg_text,
+                            relief="flat", bd=0, font=("Segoe UI Symbol", 14), cursor="hand2")
+            btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2, ipady=2)
+            btn.bind("<Enter>", lambda e, b=btn: b.config(bg=bg_hover))
+            btn.bind("<Leave>", lambda e, b=btn: b.config(bg=bg_panel))
+
+        add_separator(self.frame_ferramentas)
+
+        # --- FERRAMENTAS DE DESENHO ---
+        add_flat_button(self.frame_ferramentas, "Parede", "✏️", lambda: self.set_ferramenta('linha'))
+        add_flat_button(self.frame_ferramentas, "Linha Fina", "📏", lambda: self.set_ferramenta('linha_fina'))
+        add_flat_button(self.frame_ferramentas, "Tracejada", "✂️", lambda: self.set_ferramenta('linha_tracejada'))
+        add_flat_button(self.frame_ferramentas, "Porta", "🚪", lambda: self.set_ferramenta('porta'))
+        add_flat_button(self.frame_ferramentas, "Escada Caracol", "🌀", lambda: self.set_ferramenta('escada_caracol'))
+        add_flat_button(self.frame_ferramentas, "Trim (Cortar)", "🔪", lambda: self.set_ferramenta('trim'))
+        add_flat_button(self.frame_ferramentas, "Texto", "🔤", lambda: self.set_ferramenta('texto'))
+        
+        add_separator(self.frame_ferramentas)
+
+        # --- EDIÇÃO E CONTROLE ---
+        add_flat_button(self.frame_ferramentas, "Mover", "✋", lambda: self.set_ferramenta('mover_objeto'))
+        add_flat_button(self.frame_ferramentas, "Borracha", "🧼", lambda: self.set_ferramenta('borracha'))
+        
+        self.btn_ortogonal_frame = tk.Frame(self.frame_ferramentas, bg=bg_panel)
+        self.btn_ortogonal_frame.pack(fill=tk.X, pady=2, padx=8)
+        self.lbl_orto_icon = tk.Label(self.btn_ortogonal_frame, text="📐", bg=bg_panel, fg=fg_text, font=("Segoe UI Emoji", 11))
+        self.lbl_orto_icon.pack(side=tk.LEFT, padx=(2, 6))
+        self.btn_ortogonal = tk.Button(self.btn_ortogonal_frame, text="Trava 90°: ON", command=self.alternar_ortogonal, 
+                                       bg=bg_panel, activebackground=bg_hover, fg=fg_text, relief="flat", bd=0, font=font_ui, anchor="w", cursor="hand2")
+        self.btn_ortogonal.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self.lbl_orto_icon.bind("<Button-1>", lambda e: self.alternar_ortogonal())
+        for w in [self.btn_ortogonal_frame, self.lbl_orto_icon, self.btn_ortogonal]:
+            w.bind("<Enter>", lambda e, f=self.btn_ortogonal_frame, l=self.lbl_orto_icon, b=self.btn_ortogonal: (f.config(bg=bg_hover), l.config(bg=bg_hover), b.config(bg=bg_hover)))
+            w.bind("<Leave>", lambda e, f=self.btn_ortogonal_frame, l=self.lbl_orto_icon, b=self.btn_ortogonal: (f.config(bg=bg_panel), l.config(bg=bg_panel), b.config(bg=bg_panel)))
+
+        self.btn_grid_frame = tk.Frame(self.frame_ferramentas, bg=bg_panel)
+        self.btn_grid_frame.pack(fill=tk.X, pady=2, padx=8)
+        self.lbl_grid_icon = tk.Label(self.btn_grid_frame, text="🌐", bg=bg_panel, fg=fg_text, font=("Segoe UI Emoji", 11))
+        self.lbl_grid_icon.pack(side=tk.LEFT, padx=(2, 6))
+        self.btn_grid = tk.Button(self.btn_grid_frame, text="Malha: ON", command=self.alternar_malha, 
+                                  bg=bg_panel, activebackground=bg_hover, fg=fg_text, relief="flat", bd=0, font=font_ui, anchor="w", cursor="hand2")
+        self.btn_grid.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self.lbl_grid_icon.bind("<Button-1>", lambda e: self.alternar_malha())
+        for w in [self.btn_grid_frame, self.lbl_grid_icon, self.btn_grid]:
+            w.bind("<Enter>", lambda e, f=self.btn_grid_frame, l=self.lbl_grid_icon, b=self.btn_grid: (f.config(bg=bg_hover), l.config(bg=bg_hover), b.config(bg=bg_hover)))
+            w.bind("<Leave>", lambda e, f=self.btn_grid_frame, l=self.lbl_grid_icon, b=self.btn_grid: (f.config(bg=bg_panel), l.config(bg=bg_panel), b.config(bg=bg_panel)))
+
+        add_separator(self.frame_ferramentas)
+
+        # --- VISUALIZAÇÃO E ARQUIVO ---
+        add_flat_button(self.frame_ferramentas, "Expandir Tela", "➕", lambda: self.redimensionar_tela(2000))
+        add_flat_button(self.frame_ferramentas, "Modo Noturno", "🌗", self.alternar_modo_noturno)
+        add_flat_button(self.frame_ferramentas, "Exportar PNG", "💾", self.exportar_png)
+        
+        add_separator(self.frame_ferramentas)
+        
+        add_flat_button(self.frame_ferramentas, "Limpar Tudo", "🗑️", self.limpar_tudo, fg_color="#c0392b")
+
     def gerenciar_atalhos(self, event):
         if isinstance(event.widget, tk.Text) or isinstance(event.widget, tk.Spinbox): return
         if event.keysym == 'F7': self.alternar_ortogonal(); return
@@ -166,16 +218,24 @@ class CroquiApp:
         elif char == 'm': self.set_ferramenta('mover_objeto')
         elif char == 'b': self.set_ferramenta('borracha')
 
-    # --- TEXTO AUTOMÁTICO (CLICAR FORA SALVA) ---
+    # --- TEXTO AUTOMÁTICO - FIX SINGLETON ---
     def abrir_caixa_texto(self, x_tela, y_tela, x_canvas, y_canvas):
+        # Garante que se tiver outra caixa aberta, ela seja salva e fechada
+        if getattr(self, 'janela_texto_ativa', None) and self.janela_texto_ativa.winfo_exists():
+            try:
+                self.salvar_texto_ativo()
+            except:
+                pass
+
         top = tk.Toplevel(self.root)
+        self.janela_texto_ativa = top
         top.title("Texto")
         top.geometry(f"+{x_tela}+{y_tela}")
         top.attributes('-topmost', True)
         
         txt = tk.Text(top, width=22, height=3, font=("Arial", 11), wrap=tk.WORD)
         txt.pack(padx=5, pady=5)
-        txt.focus_set()
+        txt.focus_force() 
 
         frame_ctrl = tk.Frame(top)
         frame_ctrl.pack(fill=tk.X, padx=5, pady=(0,5))
@@ -194,6 +254,9 @@ class CroquiApp:
             conteudo = txt.get("1.0", tk.END).strip()
             tamanho = var_tamanho.get()
             
+            self.janela_texto_ativa = None
+            self.salvar_texto_ativo = None
+            
             top.destroy()
             if conteudo:
                 tam_zoom = max(1, int(tamanho * self.zoom_factor))
@@ -206,9 +269,11 @@ class CroquiApp:
                     justify=tk.CENTER
                 )
                 self.registrar_acao({'tipo': 'add', 'itens': [id_texto]})
+                
+        self.salvar_texto_ativo = salvar
         
         def on_focus_out(event):
-            top.after(100, check_focus)
+            top.after(150, check_focus)
             
         def check_focus():
             try:
@@ -226,7 +291,6 @@ class CroquiApp:
         txt.bind("<Return>", on_enter)
         top.bind("<Escape>", lambda e: top.destroy())
 
-    # --- NOVO SISTEMA DE JUNÇÕES (BOLAS) GLOBAL E INTELIGENTE ---
     def atualizar_todas_juncoes(self):
         self.canvas.delete("juncao")
         paredes = self.canvas.find_withtag("parede")
@@ -260,7 +324,6 @@ class CroquiApp:
                                         fill=cor, outline="", 
                                         tags=("desenho", "juncao"))
 
-    # --- TRIM ENGINE ---
     def ponto_no_segmento(self, P, A, B):
         dAP = math.hypot(P[0]-A[0], P[1]-A[1])
         dPB = math.hypot(B[0]-P[0], B[1]-P[1])
@@ -353,7 +416,6 @@ class CroquiApp:
             self.registrar_acao({'tipo': 'trim', 'original': item_id, 'novos': novas_linhas})
             self.atualizar_todas_juncoes()
 
-    # --- HISTÓRICO ---
     def inverter_porta(self, event=None):
         if self.ferramenta_atual == 'porta' and self.arco_atual: self.flip_porta *= -1
 
@@ -390,15 +452,14 @@ class CroquiApp:
             
         self.atualizar_todas_juncoes()
 
-    # --- CONFIGURAÇÕES E ESTILOS ---
     def alternar_ortogonal(self):
         self.ortogonal_ativo = not self.ortogonal_ativo
-        self.btn_ortogonal.config(text=f"📐 Trava 90° (F7): {'LIGADA' if self.ortogonal_ativo else 'DESLIGADA'}", bg="#d1e7dd" if self.ortogonal_ativo else "#f8d7da")
+        self.btn_ortogonal.config(text=f"Trava 90°: {'ON' if self.ortogonal_ativo else 'OFF'}")
 
     def alternar_malha(self):
         self.grid_visivel = not self.grid_visivel
         self.canvas.itemconfig("grid", state="normal" if self.grid_visivel else "hidden")
-        self.btn_grid.config(text=f"🌐 Malha: {'ON' if self.grid_visivel else 'OFF'}")
+        self.btn_grid.config(text=f"Malha: {'ON' if self.grid_visivel else 'OFF'}")
 
     def alternar_modo_noturno(self):
         self.modo_noturno = not self.modo_noturno
@@ -427,6 +488,10 @@ class CroquiApp:
         self.desenhar_malha()
 
     def set_ferramenta(self, f):
+        if getattr(self, 'janela_texto_ativa', None) and self.janela_texto_ativa.winfo_exists():
+            try: self.salvar_texto_ativo()
+            except: pass
+            
         self.ferramenta_atual = f
         cursores = {'borracha': 'dot box', 'texto': 'xterm', 'mover_objeto': 'fleur', 'trim': 'pencil', 'escada_caracol': 'crosshair'}
         self.canvas.config(cursor=cursores.get(f, 'crosshair'))
@@ -482,8 +547,11 @@ class CroquiApp:
                 fl = self.canvas.create_line(mx, my, fx, fy, arrow=tk.LAST, fill=cor_escada, width=w_grossa, tags=("desenho", "escada_caracol", "esc_seta"))
                 self.itens_escada_atual.append(fl)
 
-    # --- MOUSE EVENTS ---
     def clicar(self, event):
+        if getattr(self, 'janela_texto_ativa', None) and self.janela_texto_ativa.winfo_exists():
+            try: self.salvar_texto_ativo()
+            except: pass
+            
         cx, cy = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
         x_s, y_s = self.snap(cx), self.snap(cy)
         

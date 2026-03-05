@@ -1,6 +1,7 @@
 import tkinter as tk
 import tkinter.simpledialog as sd
 import tkinter.filedialog as fd
+import tkinter.colorchooser as cc
 import math
 
 # --- CORREÇÃO DE DPI PARA MÚLTIPLOS MONITORES NO WINDOWS ---
@@ -219,7 +220,7 @@ class CroquiApp:
         elif char == 'b': self.set_ferramenta('borracha')
 
     # --- TEXTO AUTOMÁTICO - FIX SINGLETON ---
-    def abrir_caixa_texto(self, x_tela, y_tela, x_canvas, y_canvas):
+    def abrir_caixa_texto(self, x_tela, y_tela, x_canvas, y_canvas, item_id=None):
         # Garante que se tiver outra caixa aberta, ela seja salva e fechada
         if getattr(self, 'janela_texto_ativa', None) and self.janela_texto_ativa.winfo_exists():
             try:
@@ -233,17 +234,65 @@ class CroquiApp:
         top.geometry(f"+{x_tela}+{y_tela}")
         top.attributes('-topmost', True)
         
+        picking_color = False
+        
+        texto_ini = ""
+        tam_ini = 12
+        cor_ini = self.tema_atual['texto']
+        is_custom = False
+
+        if item_id:
+            texto_ini = self.canvas.itemcget(item_id, "text")
+            cor_ini = self.canvas.itemcget(item_id, "fill")
+            tags = self.canvas.gettags(item_id)
+            if "custom_color" in tags: is_custom = True
+            
+            # Tentar extrair tamanho da fonte
+            try:
+                font_str = self.canvas.itemcget(item_id, "font")
+                # Ex: "{Arial} 12 bold" ou "Arial 12 bold"
+                for part in font_str.split():
+                    if part.isdigit():
+                        tam_ini = int(int(part) / self.zoom_factor)
+                        break
+            except: pass
+
         txt = tk.Text(top, width=22, height=3, font=("Arial", 11), wrap=tk.WORD)
+        txt.insert("1.0", texto_ini)
         txt.pack(padx=5, pady=5)
         txt.focus_force() 
 
         frame_ctrl = tk.Frame(top)
         frame_ctrl.pack(fill=tk.X, padx=5, pady=(0,5))
         
-        tk.Label(frame_ctrl, text="Tamanho da Fonte:").pack(side=tk.LEFT)
-        var_tamanho = tk.IntVar(value=12)
+        tk.Label(frame_ctrl, text="Tam:").pack(side=tk.LEFT)
+        var_tamanho = tk.IntVar(value=tam_ini)
         spin_tam = tk.Spinbox(frame_ctrl, from_=6, to=72, textvariable=var_tamanho, width=5)
         spin_tam.pack(side=tk.LEFT, padx=(5,5))
+
+        var_cor = tk.StringVar(value=cor_ini)
+        var_custom = tk.BooleanVar(value=is_custom)
+
+        def escolher_cor():
+            nonlocal picking_color
+            picking_color = True
+            c = cc.askcolor(color=var_cor.get(), title="Cor do Texto")[1]
+            picking_color = False
+            if not top.winfo_exists(): return
+            if c:
+                var_cor.set(c)
+                var_custom.set(True)
+                btn_cor.config(bg=c)
+            txt.focus_force()
+        
+        def reset_cor():
+            var_custom.set(False)
+            var_cor.set(self.tema_atual['texto'])
+            btn_cor.config(bg="#f0f0f0")
+
+        btn_cor = tk.Button(frame_ctrl, text="Cor", command=escolher_cor, bg=cor_ini if is_custom else "#f0f0f0", width=4)
+        btn_cor.pack(side=tk.LEFT, padx=2)
+        tk.Button(frame_ctrl, text="Auto", command=reset_cor, font=("Arial", 8)).pack(side=tk.LEFT)
 
         salvo = False
         def salvar(event=None):
@@ -253,19 +302,50 @@ class CroquiApp:
             
             conteudo = txt.get("1.0", tk.END).strip()
             tamanho = var_tamanho.get()
+            cor_final = var_cor.get()
+            usar_custom = var_custom.get()
             
             self.janela_texto_ativa = None
             self.salvar_texto_ativo = None
             
             top.destroy()
-            if conteudo:
-                tam_zoom = max(1, int(tamanho * self.zoom_factor))
+            
+            if not conteudo:
+                if item_id: # Se apagou o texto todo, remove o item
+                    self.canvas.itemconfig(item_id, state='hidden')
+                    self.registrar_acao({'tipo': 'delete', 'itens': [item_id]})
+                return
+
+            tam_zoom = max(1, int(tamanho * self.zoom_factor))
+            font_spec = ("Arial", tam_zoom, "bold")
+            tags_base = ["desenho", "texto", f"fontsize_{tamanho}"]
+            if usar_custom: tags_base.append("custom_color")
+
+            if item_id:
+                # Edição
+                old_tags = list(self.canvas.gettags(item_id))
+                # Remove tags antigas de controle
+                old_tags = [t for t in old_tags if not t.startswith("fontsize_") and t != "custom_color"]
+                new_tags = tuple(old_tags + [t for t in tags_base if t not in old_tags])
+                
+                old_cfg = {
+                    'text': self.canvas.itemcget(item_id, 'text'),
+                    'font': self.canvas.itemcget(item_id, 'font'),
+                    'fill': self.canvas.itemcget(item_id, 'fill'),
+                    'tags': self.canvas.gettags(item_id)
+                }
+                new_cfg = {'text': conteudo, 'font': font_spec, 'fill': cor_final, 'tags': new_tags}
+                
+                self.canvas.itemconfig(item_id, text=conteudo, font=font_spec, fill=cor_final, tags=new_tags)
+                self.registrar_acao({'tipo': 'config', 'item': item_id, 'antigo': old_cfg, 'novo': new_cfg})
+            else:
+                # Novo
                 id_texto = self.canvas.create_text(
                     x_canvas, y_canvas, 
                     text=conteudo, 
-                    font=("Arial", tam_zoom, "bold"), 
-                    fill=self.tema_atual['texto'], 
-                    tags=("desenho", "texto", f"fontsize_{tamanho}"), 
+                    font=font_spec, 
+                    fill=cor_final, 
+                    tags=tuple(tags_base), 
                     justify=tk.CENTER
                 )
                 self.registrar_acao({'tipo': 'add', 'itens': [id_texto]})
@@ -276,6 +356,7 @@ class CroquiApp:
             top.after(150, check_focus)
             
         def check_focus():
+            if picking_color: return
             try:
                 focused = self.root.focus_get()
                 if focused is None or not str(focused).startswith(str(top)):
@@ -434,6 +515,9 @@ class CroquiApp:
         elif acao['tipo'] == 'trim':
             self.canvas.itemconfig(acao['original'], state='normal')
             for nl in acao['novos']: self.canvas.itemconfig(nl, state='hidden')
+        elif acao['tipo'] == 'config':
+            cfg = acao['antigo']
+            self.canvas.itemconfig(acao['item'], text=cfg['text'], font=cfg['font'], fill=cfg['fill'], tags=cfg['tags'])
             
         self.atualizar_todas_juncoes()
 
@@ -449,6 +533,9 @@ class CroquiApp:
         elif acao['tipo'] == 'trim':
             self.canvas.itemconfig(acao['original'], state='hidden')
             for nl in acao['novos']: self.canvas.itemconfig(nl, state='normal')
+        elif acao['tipo'] == 'config':
+            cfg = acao['novo']
+            self.canvas.itemconfig(acao['item'], text=cfg['text'], font=cfg['font'], fill=cfg['fill'], tags=cfg['tags'])
             
         self.atualizar_todas_juncoes()
 
@@ -469,7 +556,9 @@ class CroquiApp:
         for i in self.canvas.find_withtag("parede"): self.canvas.itemconfig(i, fill=self.tema_atual['linha'])
         for i in self.canvas.find_withtag("linha_tracejada"): self.canvas.itemconfig(i, fill=self.tema_atual['linha'])
         for i in self.canvas.find_withtag("juncao"): self.canvas.itemconfig(i, fill=self.tema_atual['linha'], outline="")
-        for i in self.canvas.find_withtag("texto"): self.canvas.itemconfig(i, fill=self.tema_atual['texto'])
+        for i in self.canvas.find_withtag("texto"): 
+            if "custom_color" not in self.canvas.gettags(i):
+                self.canvas.itemconfig(i, fill=self.tema_atual['texto'])
         for i in self.canvas.find_withtag("porta"):
             if self.canvas.type(i) == "line": self.canvas.itemconfig(i, fill=self.tema_atual['linha'])
             elif self.canvas.type(i) == "arc": self.canvas.itemconfig(i, outline=self.tema_atual['porta'])
@@ -580,7 +669,13 @@ class CroquiApp:
             self.executar_trim(event)
         
         elif self.ferramenta_atual == 'texto': 
-            self.abrir_caixa_texto(event.x_root, event.y_root, x_s, y_s)
+            item_clicado = None
+            # Verifica se clicou em texto existente para editar
+            for i in self.canvas.find_overlapping(cx-5, cy-5, cx+5, cy+5):
+                if self.canvas.type(i) == "text" and str(self.canvas.itemcget(i, 'state')) != 'hidden':
+                    item_clicado = i
+                    break
+            self.abrir_caixa_texto(event.x_root, event.y_root, x_s, y_s, item_clicado)
         
         elif self.ferramenta_atual == 'mover_objeto':
             itens = self.canvas.find_overlapping(cx-10, cy-10, cx+10, cy+10)

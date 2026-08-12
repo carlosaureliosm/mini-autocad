@@ -35,7 +35,7 @@ class CroquiApp:
         self.grid_size = 20.0      
         self.zoom_factor = 1.0     
         
-        self.ferramenta_atual = 'linha'
+        self.ferramenta_atual = 'ponteiro'
         self.espessura_parede = 8 
         self.espessura_fina = 3 
         
@@ -47,6 +47,7 @@ class CroquiApp:
         
         self.block_counter = 0
 
+        self.MAX_HISTORICO = 150
         self.historico = []
         self.futuro = []
         self.aguardando_a = False 
@@ -54,6 +55,8 @@ class CroquiApp:
         # Controladores da janela de texto única
         self.janela_texto_ativa = None
         self.salvar_texto_ativo = None
+        self.ultimo_tamanho_fonte = 12
+        self.ultima_rotacao_texto = 0
 
         # --- LAYOUT ---
         self.frame_ferramentas = tk.Frame(root, width=180)
@@ -81,6 +84,7 @@ class CroquiApp:
         self.canvas.bind("<Button-1>", self.clicar)
         self.canvas.bind("<B1-Motion>", self.arrastar)
         self.canvas.bind("<ButtonRelease-1>", self.soltar)
+        self.canvas.bind("<Double-Button-1>", self.duplo_clique_texto)
         self.canvas.bind("<MouseWheel>", self.usar_zoom_mouse)
         self.canvas.bind("<ButtonPress-2>", self.iniciar_pan)
         self.canvas.bind("<B2-Motion>", self.arrastar_pan)
@@ -88,6 +92,8 @@ class CroquiApp:
         self.root.bind("<space>", self.inverter_porta)
         self.root.bind("<Key>", self.gerenciar_atalhos)
         
+        self.canvas.bind("<Configure>", lambda e: self.desenhar_malha())
+
         self.root.after(100, self.arranque_acelerado)
 
     def arranque_acelerado(self):
@@ -95,13 +101,14 @@ class CroquiApp:
             self.root.state('zoomed')
         except:
             pass
-        self.root.update_idletasks() 
+        self.root.update_idletasks()
         w = self.canvas.winfo_width()
         h = self.canvas.winfo_height()
         x_frac = 0.5 - (w / (2 * self.cw))
         y_frac = 0.5 - (h / (2 * self.ch))
         self.canvas.xview_moveto(x_frac)
         self.canvas.yview_moveto(y_frac)
+        self.desenhar_malha()
 
     def criar_botoes_ferramentas(self):
         bg_panel = "#f0f0f0" 
@@ -147,6 +154,7 @@ class CroquiApp:
         add_separator(self.frame_ferramentas)
 
         # --- FERRAMENTAS DE DESENHO ---
+        add_flat_button(self.frame_ferramentas, "Ponteiro", "🖱️", lambda: self.set_ferramenta('ponteiro'))
         add_flat_button(self.frame_ferramentas, "Parede", "✏️", lambda: self.set_ferramenta('linha'))
         add_flat_button(self.frame_ferramentas, "Linha Fina", "📏", lambda: self.set_ferramenta('linha_fina'))
         add_flat_button(self.frame_ferramentas, "Tracejada", "✂️", lambda: self.set_ferramenta('linha_tracejada'))
@@ -209,7 +217,8 @@ class CroquiApp:
             if char == 'a': self.set_ferramenta('linha')
             self.aguardando_a = False; return
 
-        if char == 'l': self.set_ferramenta('linha_fina')
+        if char == 's': self.set_ferramenta('ponteiro')
+        elif char == 'l': self.set_ferramenta('linha_fina')
         elif char == 'd': self.set_ferramenta('linha_tracejada')
         elif char == 'p': self.set_ferramenta('porta')
         elif char == 'e': self.set_ferramenta('escada_caracol')
@@ -219,7 +228,7 @@ class CroquiApp:
         elif char == 'b': self.set_ferramenta('borracha')
 
     # --- TEXTO AUTOMÁTICO - FIX SINGLETON ---
-    def abrir_caixa_texto(self, x_tela, y_tela, x_canvas, y_canvas):
+    def abrir_caixa_texto(self, x_tela, y_tela, x_canvas, y_canvas, item_editar=None):
         # Garante que se tiver outra caixa aberta, ela seja salva e fechada
         if getattr(self, 'janela_texto_ativa', None) and self.janela_texto_ativa.winfo_exists():
             try:
@@ -229,47 +238,107 @@ class CroquiApp:
 
         top = tk.Toplevel(self.root)
         self.janela_texto_ativa = top
-        top.title("Texto")
+        top.title("Editar Texto" if item_editar else "Texto")
         top.geometry(f"+{x_tela}+{y_tela}")
         top.attributes('-topmost', True)
-        
+
         txt = tk.Text(top, width=22, height=3, font=("Arial", 11), wrap=tk.WORD)
         txt.pack(padx=5, pady=5)
-        txt.focus_force() 
+
+        tamanho_inicial = self.ultimo_tamanho_fonte
+        angulo_inicial = self.ultima_rotacao_texto
+
+        if item_editar:
+            texto_atual = self.canvas.itemcget(item_editar, "text")
+            txt.insert("1.0", texto_atual)
+            for t in self.canvas.gettags(item_editar):
+                if t.startswith("fontsize_"):
+                    tamanho_inicial = int(t.split("_")[1])
+            try:
+                angulo_inicial = int(float(self.canvas.itemcget(item_editar, "angle") or 0))
+            except (tk.TclError, ValueError):
+                angulo_inicial = 0
+
+        txt.focus_force()
+        txt.tag_add("sel", "1.0", tk.END)
 
         frame_ctrl = tk.Frame(top)
-        frame_ctrl.pack(fill=tk.X, padx=5, pady=(0,5))
-        
-        tk.Label(frame_ctrl, text="Tamanho da Fonte:").pack(side=tk.LEFT)
-        var_tamanho = tk.IntVar(value=12)
+        frame_ctrl.pack(fill=tk.X, padx=5, pady=(0,2))
+
+        tk.Label(frame_ctrl, text="Tamanho:").pack(side=tk.LEFT)
+        var_tamanho = tk.IntVar(value=tamanho_inicial)
         spin_tam = tk.Spinbox(frame_ctrl, from_=6, to=72, textvariable=var_tamanho, width=5)
         spin_tam.pack(side=tk.LEFT, padx=(5,5))
+
+        frame_ctrl2 = tk.Frame(top)
+        frame_ctrl2.pack(fill=tk.X, padx=5, pady=(0,5))
+
+        tk.Label(frame_ctrl2, text="Rotação:").pack(side=tk.LEFT)
+        var_angulo = tk.IntVar(value=angulo_inicial)
+        spin_ang = tk.Spinbox(frame_ctrl2, from_=0, to=359, increment=15, textvariable=var_angulo, width=5, wrap=True)
+        spin_ang.pack(side=tk.LEFT, padx=(5,5))
 
         salvo = False
         def salvar(event=None):
             nonlocal salvo
             if salvo: return
             salvo = True
-            
+
             conteudo = txt.get("1.0", tk.END).strip()
-            tamanho = var_tamanho.get()
-            
+            try:
+                tamanho = var_tamanho.get()
+            except tk.TclError:
+                tamanho = tamanho_inicial
+            try:
+                angulo = var_angulo.get() % 360
+            except tk.TclError:
+                angulo = angulo_inicial
+
+            self.ultimo_tamanho_fonte = tamanho
+            self.ultima_rotacao_texto = angulo
+
             self.janela_texto_ativa = None
             self.salvar_texto_ativo = None
-            
+
             top.destroy()
-            if conteudo:
+
+            if item_editar:
+                if not conteudo:
+                    if str(self.canvas.itemcget(item_editar, 'state')) != 'hidden':
+                        self.canvas.itemconfig(item_editar, state='hidden')
+                        self.registrar_acao({'tipo': 'delete', 'itens': [item_editar]})
+                    return
+
+                texto_antigo = self.canvas.itemcget(item_editar, "text")
+                tags_antigas = self.canvas.gettags(item_editar)
+                tam_antigo = 12
+                for t in tags_antigas:
+                    if t.startswith("fontsize_"): tam_antigo = int(t.split("_")[1])
+                try:
+                    ang_antigo = float(self.canvas.itemcget(item_editar, "angle") or 0)
+                except (tk.TclError, ValueError):
+                    ang_antigo = 0
+
+                self.aplicar_estado_texto(item_editar, {'texto': conteudo, 'tamanho': tamanho, 'angulo': angulo})
+
+                self.registrar_acao({
+                    'tipo': 'edit_texto', 'item': item_editar,
+                    'antes': {'texto': texto_antigo, 'tamanho': tam_antigo, 'angulo': ang_antigo},
+                    'depois': {'texto': conteudo, 'tamanho': tamanho, 'angulo': angulo}
+                })
+            elif conteudo:
                 tam_zoom = max(1, int(tamanho * self.zoom_factor))
                 id_texto = self.canvas.create_text(
-                    x_canvas, y_canvas, 
-                    text=conteudo, 
-                    font=("Arial", tam_zoom, "bold"), 
-                    fill=self.tema_atual['texto'], 
-                    tags=("desenho", "texto", f"fontsize_{tamanho}"), 
+                    x_canvas, y_canvas,
+                    text=conteudo,
+                    font=("Arial", tam_zoom, "bold"),
+                    angle=angulo,
+                    fill=self.tema_atual['texto'],
+                    tags=("desenho", "texto", f"fontsize_{tamanho}"),
                     justify=tk.CENTER
                 )
                 self.registrar_acao({'tipo': 'add', 'itens': [id_texto]})
-                
+
         self.salvar_texto_ativo = salvar
         
         def on_focus_out(event):
@@ -290,6 +359,27 @@ class CroquiApp:
 
         txt.bind("<Return>", on_enter)
         top.bind("<Escape>", lambda e: top.destroy())
+
+    def aplicar_estado_texto(self, item, dados):
+        tam_zoom = max(1, int(dados['tamanho'] * self.zoom_factor))
+        self.canvas.itemconfig(item, text=dados['texto'], font=("Arial", tam_zoom, "bold"), angle=dados['angulo'])
+        if str(self.canvas.itemcget(item, 'state')) == 'hidden':
+            self.canvas.itemconfig(item, state='normal')
+        tags_atuais = self.canvas.gettags(item)
+        novas_tags = tuple(t for t in tags_atuais if not t.startswith("fontsize_")) + (f"fontsize_{dados['tamanho']}",)
+        self.canvas.itemconfig(item, tags=novas_tags)
+
+    def duplo_clique_texto(self, event):
+        cx, cy = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        itens = self.canvas.find_overlapping(cx-10, cy-10, cx+10, cy+10)
+        item_texto = None
+        for i in reversed(itens):
+            tags = self.canvas.gettags(i)
+            if "texto" in tags and str(self.canvas.itemcget(i, 'state')) != 'hidden':
+                item_texto = i
+                break
+        if item_texto:
+            self.abrir_caixa_texto(event.x_root, event.y_root, 0, 0, item_editar=item_texto)
 
     def atualizar_todas_juncoes(self):
         self.canvas.delete("juncao")
@@ -365,11 +455,21 @@ class CroquiApp:
         tags = self.canvas.gettags(item_id)
         coords = self.canvas.coords(item_id)
         A, B = (coords[0], coords[1]), (coords[2], coords[3])
-        todas_linhas = self.canvas.find_withtag("desenho")
+
+        # Otimização: em vez de varrer TODOS os itens do desenho a cada arraste do
+        # trim, usa find_overlapping (índice espacial nativo do Tk) para restringir
+        # a busca de interseções aos itens cuja bounding box toca a região do segmento.
+        # Isso é seguro: duas linhas só podem se cruzar se suas bounding boxes se sobrepõem.
+        pad = 30 * self.zoom_factor
+        candidatos = self.canvas.find_overlapping(
+            min(A[0], B[0]) - pad, min(A[1], B[1]) - pad,
+            max(A[0], B[0]) + pad, max(A[1], B[1]) + pad
+        )
         intersecoes = [A, B]
-        for outro_id in todas_linhas:
+        for outro_id in candidatos:
             if outro_id == item_id or str(self.canvas.itemcget(outro_id, 'state')) == 'hidden': continue
             outras_tags = self.canvas.gettags(outro_id)
+            if "desenho" not in outras_tags: continue
             if "porta" in outras_tags:
                 if self.canvas.type(outro_id) == "arc":
                     c_arc = self.canvas.coords(outro_id)
@@ -421,6 +521,18 @@ class CroquiApp:
 
     def registrar_acao(self, acao):
         self.historico.append(acao); self.futuro.clear()
+        self.purgar_historico_excedente()
+
+    def purgar_historico_excedente(self):
+        # Ações que saem do limite do histórico nunca mais poderão ser desfeitas,
+        # então os itens que elas mantinham apenas ocultos (delete/trim) podem ser
+        # removidos de vez do canvas, evitando que cresçam para sempre.
+        while len(self.historico) > self.MAX_HISTORICO:
+            acao_antiga = self.historico.pop(0)
+            if acao_antiga['tipo'] == 'delete':
+                for i in acao_antiga['itens']: self.canvas.delete(i)
+            elif acao_antiga['tipo'] == 'trim':
+                self.canvas.delete(acao_antiga['original'])
 
     def desfazer_acao(self, event=None):
         if not self.historico: return
@@ -434,7 +546,9 @@ class CroquiApp:
         elif acao['tipo'] == 'trim':
             self.canvas.itemconfig(acao['original'], state='normal')
             for nl in acao['novos']: self.canvas.itemconfig(nl, state='hidden')
-            
+        elif acao['tipo'] == 'edit_texto':
+            self.aplicar_estado_texto(acao['item'], acao['antes'])
+
         self.atualizar_todas_juncoes()
 
     def refazer_acao(self, event=None):
@@ -449,7 +563,9 @@ class CroquiApp:
         elif acao['tipo'] == 'trim':
             self.canvas.itemconfig(acao['original'], state='hidden')
             for nl in acao['novos']: self.canvas.itemconfig(nl, state='normal')
-            
+        elif acao['tipo'] == 'edit_texto':
+            self.aplicar_estado_texto(acao['item'], acao['depois'])
+
         self.atualizar_todas_juncoes()
 
     def alternar_ortogonal(self):
@@ -493,23 +609,33 @@ class CroquiApp:
             except: pass
             
         self.ferramenta_atual = f
-        cursores = {'borracha': 'dot box', 'texto': 'xterm', 'mover_objeto': 'fleur', 'trim': 'pencil', 'escada_caracol': 'crosshair'}
+        cursores = {'ponteiro': 'arrow', 'borracha': 'dot box', 'texto': 'xterm', 'mover_objeto': 'fleur', 'trim': 'pencil', 'escada_caracol': 'crosshair'}
         self.canvas.config(cursor=cursores.get(f, 'crosshair'))
 
     def desenhar_malha(self):
+        # Otimização: desenha a malha apenas na área visível (viewport), não no
+        # plano cartesiano inteiro (que pode ter milhares de linhas em telas grandes/zoom).
         self.canvas.delete("grid")
         gs = int(self.grid_size)
-        if gs < 5: return 
+        if gs < 5: return
         color = self.tema_atual['grid']
-        
-        start_x = (self.cx_min // gs) * gs
-        start_y = (self.cy_min // gs) * gs
-        
-        for i in range(start_x, self.cx_max + 1, gs): 
-            self.canvas.create_line(i, self.cy_min, i, self.cy_max, fill=color, tags="grid", dash=(2, 4))
-        for j in range(start_y, self.cy_max + 1, gs): 
-            self.canvas.create_line(self.cx_min, j, self.cx_max, j, fill=color, tags="grid", dash=(2, 4))
-            
+
+        largura = self.canvas.winfo_width() or 1
+        altura = self.canvas.winfo_height() or 1
+        margem = gs * 2
+        x_min = max(self.cx_min, math.floor(self.canvas.canvasx(0) - margem))
+        x_max = min(self.cx_max, math.ceil(self.canvas.canvasx(largura) + margem))
+        y_min = max(self.cy_min, math.floor(self.canvas.canvasy(0) - margem))
+        y_max = min(self.cy_max, math.ceil(self.canvas.canvasy(altura) + margem))
+
+        start_x = (int(x_min) // gs) * gs
+        start_y = (int(y_min) // gs) * gs
+
+        for i in range(start_x, int(x_max) + 1, gs):
+            self.canvas.create_line(i, y_min, i, y_max, fill=color, tags="grid", dash=(2, 4))
+        for j in range(start_y, int(y_max) + 1, gs):
+            self.canvas.create_line(x_min, j, x_max, j, fill=color, tags="grid", dash=(2, 4))
+
         color_axis = self.tema_atual['eixo']
         self.canvas.create_line(0, self.cy_min, 0, self.cy_max, fill=color_axis, tags="grid", width=1.5)
         self.canvas.create_line(self.cx_min, 0, self.cx_max, 0, fill=color_axis, tags="grid", width=1.5)
@@ -530,21 +656,21 @@ class CroquiApp:
         w_fina = self.espessura_fina * self.zoom_factor
         w_grossa = 2 * self.zoom_factor
         
-        miolo = self.canvas.create_oval(xc-r_interno, yc-r_interno, xc+r_interno, yc+r_interno, outline=cor_escada, width=w_grossa, tags=("desenho", "escada_caracol", "esc_arco"))
+        miolo = self.canvas.create_oval(xc-r_interno, yc-r_interno, xc+r_interno, yc+r_interno, outline=cor_escada, width=w_grossa, tags=("desenho", "escada_caracol", "esc_arco", "tipo_arco"))
         self.itens_escada_atual.append(miolo)
-        corrimao = self.canvas.create_arc(xc-r_externo, yc-r_externo, xc+r_externo, yc+r_externo, start=0, extent=270, style=tk.ARC, outline=cor_escada, width=w_grossa, tags=("desenho", "escada_caracol", "esc_arco"))
+        corrimao = self.canvas.create_arc(xc-r_externo, yc-r_externo, xc+r_externo, yc+r_externo, start=0, extent=270, style=tk.ARC, outline=cor_escada, width=w_grossa, tags=("desenho", "escada_caracol", "esc_arco", "tipo_arco"))
         self.itens_escada_atual.append(corrimao)
         for i in range(13):
             ang_rad = math.radians(i * (270/12))
-            x1, y1 = xc + r_interno * math.cos(ang_rad), yc - r_interno * math.sin(ang_rad) 
+            x1, y1 = xc + r_interno * math.cos(ang_rad), yc - r_interno * math.sin(ang_rad)
             x2, y2 = xc + r_externo * math.cos(ang_rad), yc - r_externo * math.sin(ang_rad)
-            degrau = self.canvas.create_line(x1, y1, x2, y2, fill=cor_escada, width=w_fina, tags=("desenho", "escada_caracol", "esc_degrau"))
+            degrau = self.canvas.create_line(x1, y1, x2, y2, fill=cor_escada, width=w_fina, tags=("desenho", "escada_caracol", "esc_degrau", "tipo_fina"))
             self.itens_escada_atual.append(degrau)
             if i == 0:
                 mx, my = (x1+x2)/2, (y1+y2)/2
                 pa = ang_rad + math.pi/2
                 fx, fy = mx + (r_externo-r_interno)*0.2 * math.cos(pa), my - (r_externo-r_interno)*0.2 * math.sin(pa)
-                fl = self.canvas.create_line(mx, my, fx, fy, arrow=tk.LAST, fill=cor_escada, width=w_grossa, tags=("desenho", "escada_caracol", "esc_seta"))
+                fl = self.canvas.create_line(mx, my, fx, fy, arrow=tk.LAST, fill=cor_escada, width=w_grossa, tags=("desenho", "escada_caracol", "esc_seta", "tipo_arco"))
                 self.itens_escada_atual.append(fl)
 
     def clicar(self, event):
@@ -561,17 +687,20 @@ class CroquiApp:
             
             w_base = self.espessura_parede if self.ferramenta_atual == 'linha' else self.espessura_fina
             w = w_base * self.zoom_factor
-            tags_f = ("desenho", "parede", self.ferramenta_atual)
+            tag_tipo = "tipo_parede" if self.ferramenta_atual == 'linha' else "tipo_fina"
+            tags_f = ("desenho", "parede", self.ferramenta_atual, tag_tipo)
+            if self.ferramenta_atual == 'linha_tracejada':
+                tags_f = tags_f + ("tipo_tracejada",)
             d_dash = (max(2, int(6 * self.zoom_factor)), max(2, int(6 * self.zoom_factor))) if self.ferramenta_atual == 'linha_tracejada' else ""
-            
+
             self.linha_atual = self.canvas.create_line(x_s, y_s, x_s, y_s, width=w, dash=d_dash, fill=self.tema_atual['linha'], capstyle=tk.ROUND, joinstyle=tk.ROUND, tags=tags_f)
-            
+
         elif self.ferramenta_atual == 'porta':
             self.inicio_x, self.inicio_y, self.inicio_x_real, self.inicio_y_real = x_s, y_s, event.x, event.y
             w_linha = self.espessura_fina * self.zoom_factor
             w_arco = 2 * self.zoom_factor
-            self.linha_atual = self.canvas.create_line(x_s, y_s, x_s, y_s, width=w_linha, fill=self.tema_atual['linha'], tags=("desenho", "porta", "porta_linha"))
-            self.arco_atual = self.canvas.create_arc(x_s, y_s, x_s, y_s, style=tk.ARC, outline=self.tema_atual['porta'], width=w_arco, tags=("desenho", "porta", "porta_arco"))
+            self.linha_atual = self.canvas.create_line(x_s, y_s, x_s, y_s, width=w_linha, fill=self.tema_atual['linha'], tags=("desenho", "porta", "porta_linha", "tipo_fina"))
+            self.arco_atual = self.canvas.create_arc(x_s, y_s, x_s, y_s, style=tk.ARC, outline=self.tema_atual['porta'], width=w_arco, tags=("desenho", "porta", "porta_arco", "tipo_arco"))
         
         elif self.ferramenta_atual == 'escada_caracol': 
             self.inicio_x, self.inicio_y, self.itens_escada_atual = x_s, y_s, []
@@ -579,8 +708,11 @@ class CroquiApp:
         elif self.ferramenta_atual == 'trim': 
             self.executar_trim(event)
         
-        elif self.ferramenta_atual == 'texto': 
-            self.abrir_caixa_texto(event.x_root, event.y_root, x_s, y_s)
+        elif self.ferramenta_atual == 'texto':
+            itens = self.canvas.find_overlapping(cx-10, cy-10, cx+10, cy+10)
+            sobre_texto = any("texto" in self.canvas.gettags(i) and str(self.canvas.itemcget(i, 'state')) != 'hidden' for i in itens)
+            if not sobre_texto:
+                self.abrir_caixa_texto(event.x_root, event.y_root, x_s, y_s)
         
         elif self.ferramenta_atual == 'mover_objeto':
             itens = self.canvas.find_overlapping(cx-10, cy-10, cx+10, cy+10)
@@ -686,7 +818,7 @@ class CroquiApp:
             self.atualizar_todas_juncoes()
 
     def iniciar_pan(self, e): self.canvas.config(cursor="fleur"); self.canvas.scan_mark(e.x, e.y)
-    def arrastar_pan(self, e): self.canvas.scan_dragto(e.x, e.y, gain=1)
+    def arrastar_pan(self, e): self.canvas.scan_dragto(e.x, e.y, gain=1); self.desenhar_malha()
     def soltar_pan(self, e): self.set_ferramenta(self.ferramenta_atual)
     
     def usar_zoom_mouse(self, e): self.aplicar_zoom(1.1 if e.delta > 0 else 0.9)
@@ -698,30 +830,23 @@ class CroquiApp:
             self.canvas.scale("desenho", 0, 0, f, f)
             self.desenhar_malha()
 
-            for i in self.canvas.find_withtag("desenho"):
+            # Otimização: atualiza espessuras em lote por tag de tipo, em vez de
+            # percorrer e reclassificar item por item (gettags/type a cada um).
+            self.canvas.itemconfig("tipo_parede", width=self.espessura_parede * self.zoom_factor)
+            self.canvas.itemconfig("tipo_fina", width=self.espessura_fina * self.zoom_factor)
+            self.canvas.itemconfig("tipo_arco", width=2 * self.zoom_factor)
+
+            d_len = max(2, int(6 * self.zoom_factor))
+            self.canvas.itemconfig("tipo_tracejada", dash=(d_len, d_len))
+
+            for i in self.canvas.find_withtag("texto"):
                 tags = self.canvas.gettags(i)
-                tipo = self.canvas.type(i)
+                base_size = 12
+                for t in tags:
+                    if t.startswith("fontsize_"): base_size = int(t.split("_")[1])
+                new_size = max(1, int(base_size * self.zoom_factor))
+                self.canvas.itemconfig(i, font=("Arial", new_size, "bold"))
 
-                if tipo in ["line", "arc"]:
-                    base_w = 2
-                    if "parede" in tags and "linha" in tags: base_w = self.espessura_parede
-                    elif "linha_fina" in tags or "linha_tracejada" in tags: base_w = self.espessura_fina
-                    elif "porta" in tags: base_w = 2 if "porta_arco" in tags else self.espessura_fina
-                    elif "escada_caracol" in tags: base_w = self.espessura_fina if "esc_degrau" in tags else 2
-                    
-                    self.canvas.itemconfig(i, width=base_w * self.zoom_factor)
-                    
-                    if "linha_tracejada" in tags:
-                        d_len = max(2, int(6 * self.zoom_factor))
-                        self.canvas.itemconfig(i, dash=(d_len, d_len))
-
-                elif tipo == "text":
-                    base_size = 12
-                    for t in tags:
-                        if t.startswith("fontsize_"): base_size = int(t.split("_")[1])
-                    new_size = max(1, int(base_size * self.zoom_factor))
-                    self.canvas.itemconfig(i, font=("Arial", new_size, "bold"))
-            
             self.atualizar_todas_juncoes()
 
     def exportar_png(self):

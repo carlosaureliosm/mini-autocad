@@ -2,6 +2,7 @@ import tkinter as tk
 import tkinter.simpledialog as sd
 import tkinter.filedialog as fd
 import tkinter.colorchooser as cc
+import json
 import math
 
 # --- CORREÇÃO DE DPI PARA MÚLTIPLOS MONITORES NO WINDOWS ---
@@ -60,9 +61,33 @@ class CroquiApp:
         self.ultima_rotacao_texto = 0
 
         # --- LAYOUT ---
+        # A barra lateral é rolável: o número de botões pode ultrapassar a
+        # altura da janela (ex.: telas pequenas), então os botões ficam num
+        # frame interno (self.frame_botoes) dentro de um Canvas com scrollbar.
         self.frame_ferramentas = tk.Frame(root, width=180)
         self.frame_ferramentas.pack(side=tk.LEFT, fill=tk.Y)
-        
+        self.frame_ferramentas.pack_propagate(False)
+
+        self._canvas_ferramentas = tk.Canvas(self.frame_ferramentas, width=180, highlightthickness=0, bd=0)
+        self._scroll_ferramentas = tk.Scrollbar(self.frame_ferramentas, orient=tk.VERTICAL, command=self._canvas_ferramentas.yview)
+        self.frame_botoes = tk.Frame(self._canvas_ferramentas)
+
+        self.frame_botoes.bind("<Configure>", lambda e: self._canvas_ferramentas.configure(scrollregion=self._canvas_ferramentas.bbox("all")))
+        self._janela_botoes = self._canvas_ferramentas.create_window((0, 0), window=self.frame_botoes, anchor="nw")
+        self._canvas_ferramentas.bind("<Configure>", lambda e: self._canvas_ferramentas.itemconfig(self._janela_botoes, width=e.width))
+        self._canvas_ferramentas.configure(yscrollcommand=self._scroll_ferramentas.set)
+
+        self._canvas_ferramentas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._scroll_ferramentas.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def _mousewheel_barra_lateral(event):
+            # Só rola a barra de ferramentas se o ponteiro estiver sobre ela
+            # (qualquer botão/label filho inclusive) — o resto do scroll
+            # (ex.: zoom no canvas de desenho) continua funcionando normal.
+            if str(event.widget).startswith(str(self.frame_ferramentas)):
+                self._canvas_ferramentas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        self.root.bind_all("<MouseWheel>", _mousewheel_barra_lateral, add="+")
+
         self.frame_canvas = tk.Frame(root)
         self.frame_canvas.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH, padx=0, pady=0)
 
@@ -92,6 +117,8 @@ class CroquiApp:
         self.canvas.bind("<ButtonRelease-2>", self.soltar_pan)
         self.root.bind("<space>", self.inverter_porta)
         self.root.bind("<Key>", self.gerenciar_atalhos)
+        self.root.bind("<Control-s>", lambda e: None if isinstance(e.widget, (tk.Text, tk.Spinbox)) else self.salvar_arquivo())
+        self.root.bind("<Control-o>", lambda e: None if isinstance(e.widget, (tk.Text, tk.Spinbox)) else self.abrir_arquivo())
         
         self.canvas.bind("<Configure>", lambda e: self.desenhar_malha())
 
@@ -118,6 +145,8 @@ class CroquiApp:
         font_ui = ("Segoe UI", 10) 
         
         self.frame_ferramentas.config(bg=bg_panel)
+        self._canvas_ferramentas.config(bg=bg_panel)
+        self.frame_botoes.config(bg=bg_panel)
 
         def add_flat_button(parent, text, icon, command, fg_color=fg_text):
             frame = tk.Frame(parent, bg=bg_panel)
@@ -141,7 +170,7 @@ class CroquiApp:
             tk.Frame(parent, height=1, bg="#d0d0d0").pack(fill=tk.X, pady=12, padx=15)
 
         # --- AÇÕES (Undo/Redo) ---
-        frame_undo_redo = tk.Frame(self.frame_ferramentas, bg=bg_panel)
+        frame_undo_redo = tk.Frame(self.frame_botoes, bg=bg_panel)
         frame_undo_redo.pack(pady=(20, 5), padx=8, fill=tk.X)
         
         for text, cmd in [("⟲", self.desfazer_acao), ("⟳", self.refazer_acao)]:
@@ -152,25 +181,25 @@ class CroquiApp:
             btn.bind("<Enter>", lambda e, b=btn: b.config(bg=bg_hover))
             btn.bind("<Leave>", lambda e, b=btn: b.config(bg=bg_panel))
 
-        add_separator(self.frame_ferramentas)
+        add_separator(self.frame_botoes)
 
         # --- FERRAMENTAS DE DESENHO ---
-        add_flat_button(self.frame_ferramentas, "Ponteiro", "🖱️", lambda: self.set_ferramenta('ponteiro'))
-        add_flat_button(self.frame_ferramentas, "Parede", "✏️", lambda: self.set_ferramenta('linha'))
-        add_flat_button(self.frame_ferramentas, "Linha Fina", "📏", lambda: self.set_ferramenta('linha_fina'))
-        add_flat_button(self.frame_ferramentas, "Tracejada", "✂️", lambda: self.set_ferramenta('linha_tracejada'))
-        add_flat_button(self.frame_ferramentas, "Porta", "🚪", lambda: self.set_ferramenta('porta'))
-        add_flat_button(self.frame_ferramentas, "Escada Caracol", "🌀", lambda: self.set_ferramenta('escada_caracol'))
-        add_flat_button(self.frame_ferramentas, "Trim (Cortar)", "🔪", lambda: self.set_ferramenta('trim'))
-        add_flat_button(self.frame_ferramentas, "Texto", "🔤", lambda: self.set_ferramenta('texto'))
-        
-        add_separator(self.frame_ferramentas)
+        add_flat_button(self.frame_botoes, "Ponteiro", "🖱️", lambda: self.set_ferramenta('ponteiro'))
+        add_flat_button(self.frame_botoes, "Parede", "✏️", lambda: self.set_ferramenta('linha'))
+        add_flat_button(self.frame_botoes, "Linha Fina", "📏", lambda: self.set_ferramenta('linha_fina'))
+        add_flat_button(self.frame_botoes, "Tracejada", "✂️", lambda: self.set_ferramenta('linha_tracejada'))
+        add_flat_button(self.frame_botoes, "Porta", "🚪", lambda: self.set_ferramenta('porta'))
+        add_flat_button(self.frame_botoes, "Escada Caracol", "🌀", lambda: self.set_ferramenta('escada_caracol'))
+        add_flat_button(self.frame_botoes, "Trim (Cortar)", "🔪", lambda: self.set_ferramenta('trim'))
+        add_flat_button(self.frame_botoes, "Texto", "🔤", lambda: self.set_ferramenta('texto'))
+
+        add_separator(self.frame_botoes)
 
         # --- EDIÇÃO E CONTROLE ---
-        add_flat_button(self.frame_ferramentas, "Mover", "✋", lambda: self.set_ferramenta('mover_objeto'))
-        add_flat_button(self.frame_ferramentas, "Borracha", "🧼", lambda: self.set_ferramenta('borracha'))
-        
-        self.btn_ortogonal_frame = tk.Frame(self.frame_ferramentas, bg=bg_panel)
+        add_flat_button(self.frame_botoes, "Mover", "✋", lambda: self.set_ferramenta('mover_objeto'))
+        add_flat_button(self.frame_botoes, "Borracha", "🧼", lambda: self.set_ferramenta('borracha'))
+
+        self.btn_ortogonal_frame = tk.Frame(self.frame_botoes, bg=bg_panel)
         self.btn_ortogonal_frame.pack(fill=tk.X, pady=2, padx=8)
         self.lbl_orto_icon = tk.Label(self.btn_ortogonal_frame, text="📐", bg=bg_panel, fg=fg_text, font=("Segoe UI Emoji", 11))
         self.lbl_orto_icon.pack(side=tk.LEFT, padx=(2, 6))
@@ -182,7 +211,7 @@ class CroquiApp:
             w.bind("<Enter>", lambda e, f=self.btn_ortogonal_frame, l=self.lbl_orto_icon, b=self.btn_ortogonal: (f.config(bg=bg_hover), l.config(bg=bg_hover), b.config(bg=bg_hover)))
             w.bind("<Leave>", lambda e, f=self.btn_ortogonal_frame, l=self.lbl_orto_icon, b=self.btn_ortogonal: (f.config(bg=bg_panel), l.config(bg=bg_panel), b.config(bg=bg_panel)))
 
-        self.btn_grid_frame = tk.Frame(self.frame_ferramentas, bg=bg_panel)
+        self.btn_grid_frame = tk.Frame(self.frame_botoes, bg=bg_panel)
         self.btn_grid_frame.pack(fill=tk.X, pady=2, padx=8)
         self.lbl_grid_icon = tk.Label(self.btn_grid_frame, text="🌐", bg=bg_panel, fg=fg_text, font=("Segoe UI Emoji", 11))
         self.lbl_grid_icon.pack(side=tk.LEFT, padx=(2, 6))
@@ -194,16 +223,24 @@ class CroquiApp:
             w.bind("<Enter>", lambda e, f=self.btn_grid_frame, l=self.lbl_grid_icon, b=self.btn_grid: (f.config(bg=bg_hover), l.config(bg=bg_hover), b.config(bg=bg_hover)))
             w.bind("<Leave>", lambda e, f=self.btn_grid_frame, l=self.lbl_grid_icon, b=self.btn_grid: (f.config(bg=bg_panel), l.config(bg=bg_panel), b.config(bg=bg_panel)))
 
-        add_separator(self.frame_ferramentas)
+        add_separator(self.frame_botoes)
+
+        # --- ARQUIVO ---
+        add_flat_button(self.frame_botoes, "Salvar Projeto", "💾", self.salvar_arquivo)
+        add_flat_button(self.frame_botoes, "Abrir Projeto", "📂", self.abrir_arquivo)
+        add_flat_button(self.frame_botoes, "Exportar DXF", "📤", self.exportar_dxf)
+        add_flat_button(self.frame_botoes, "Importar DXF", "📥", self.importar_dxf)
+
+        add_separator(self.frame_botoes)
 
         # --- VISUALIZAÇÃO E ARQUIVO ---
-        add_flat_button(self.frame_ferramentas, "Expandir Tela", "➕", lambda: self.redimensionar_tela(2000))
-        add_flat_button(self.frame_ferramentas, "Modo Noturno", "🌗", self.alternar_modo_noturno)
-        add_flat_button(self.frame_ferramentas, "Exportar PNG", "💾", self.exportar_png)
-        
-        add_separator(self.frame_ferramentas)
-        
-        add_flat_button(self.frame_ferramentas, "Limpar Tudo", "🗑️", self.limpar_tudo, fg_color="#c0392b")
+        add_flat_button(self.frame_botoes, "Expandir Tela", "➕", lambda: self.redimensionar_tela(2000))
+        add_flat_button(self.frame_botoes, "Modo Noturno", "🌗", self.alternar_modo_noturno)
+        add_flat_button(self.frame_botoes, "Exportar PNG", "🖼️", self.exportar_png)
+
+        add_separator(self.frame_botoes)
+
+        add_flat_button(self.frame_botoes, "Limpar Tudo", "🗑️", self.limpar_tudo, fg_color="#c0392b")
 
     def gerenciar_atalhos(self, event):
         if isinstance(event.widget, tk.Text) or isinstance(event.widget, tk.Spinbox): return
@@ -890,6 +927,278 @@ class CroquiApp:
                 self.canvas.itemconfig(i, font=("Arial", new_size, "bold"))
 
             self.atualizar_todas_juncoes()
+
+    # --- SALVAR / ABRIR (formato próprio .croqui, em JSON) ---
+    def serializar_item(self, i):
+        tipo = self.canvas.type(i)
+        coords = self.canvas.coords(i)
+        tags = list(self.canvas.gettags(i))
+        opcoes = {}
+        for chave, val in self.canvas.itemconfig(i).items():
+            if chave in ('tags', 'state'): continue
+            opcoes[chave] = val[-1]
+        return {'tipo': tipo, 'coords': coords, 'tags': tags, 'opcoes': opcoes}
+
+    def recriar_item(self, dados):
+        criar_por_tipo = {
+            'line': self.canvas.create_line,
+            'arc': self.canvas.create_arc,
+            'oval': self.canvas.create_oval,
+            'text': self.canvas.create_text,
+            'rectangle': self.canvas.create_rectangle,
+            'polygon': self.canvas.create_polygon,
+        }
+        criar = criar_por_tipo.get(dados.get('tipo'))
+        if not criar: return None
+        opcoes = dict(dados.get('opcoes', {}))
+        opcoes.pop('tags', None)
+        try:
+            return criar(*dados['coords'], tags=tuple(dados.get('tags', [])), **opcoes)
+        except tk.TclError:
+            return None
+
+    def salvar_arquivo(self):
+        if getattr(self, 'janela_texto_ativa', None) and self.janela_texto_ativa.winfo_exists():
+            try: self.salvar_texto_ativo()
+            except: pass
+
+        caminho = fd.asksaveasfilename(defaultextension=".croqui", filetypes=[("Croqui (Gerador de Planta Baixa)", "*.croqui")])
+        if not caminho: return
+
+        itens_json = []
+        for i in self.canvas.find_withtag("desenho"):
+            if str(self.canvas.itemcget(i, 'state')) == 'hidden': continue
+            if "juncao" in self.canvas.gettags(i): continue
+            itens_json.append(self.serializar_item(i))
+
+        dados = {
+            'formato': 'croqui-gerador-planta-baixa',
+            'versao': 1,
+            'zoom_factor': self.zoom_factor,
+            'grid_size': self.grid_size,
+            'block_counter': self.block_counter,
+            'modo_noturno': self.modo_noturno,
+            'itens': itens_json,
+        }
+        try:
+            with open(caminho, 'w', encoding='utf-8') as f:
+                json.dump(dados, f, ensure_ascii=False, indent=1)
+            tk.messagebox.showinfo("Sucesso", "Projeto salvo com sucesso!")
+        except Exception as e:
+            tk.messagebox.showerror("Erro", f"Falha ao salvar o projeto:\n{e}")
+
+    def abrir_arquivo(self):
+        caminho = fd.askopenfilename(filetypes=[("Croqui (Gerador de Planta Baixa)", "*.croqui")])
+        if not caminho: return
+
+        try:
+            with open(caminho, 'r', encoding='utf-8') as f:
+                dados = json.load(f)
+        except Exception as e:
+            tk.messagebox.showerror("Erro", f"Falha ao abrir o projeto:\n{e}")
+            return
+
+        if not tk.messagebox.askyesno("Abrir Projeto", "Isso substitui o desenho atual (o histórico de desfazer será perdido). Continuar?"):
+            return
+
+        self.canvas.delete("desenho")
+        self.canvas.delete("grid")
+        self.historico.clear()
+        self.futuro.clear()
+
+        self.zoom_factor = dados.get('zoom_factor', 1.0)
+        self.grid_size = dados.get('grid_size', 20.0)
+        self.block_counter = dados.get('block_counter', 0)
+
+        modo_noturno_salvo = dados.get('modo_noturno', self.modo_noturno)
+        if modo_noturno_salvo != self.modo_noturno:
+            self.modo_noturno = modo_noturno_salvo
+            self.tema_atual = CORES['noite'] if self.modo_noturno else CORES['dia']
+            self.canvas.config(bg=self.tema_atual['fundo'])
+
+        for item_data in dados.get('itens', []):
+            self.recriar_item(item_data)
+
+        self.desenhar_malha()
+        self.atualizar_todas_juncoes()
+
+    # --- EXPORTAR / IMPORTAR DXF (compatível com AutoCAD e outros CADs) ---
+    def exportar_dxf(self):
+        if getattr(self, 'janela_texto_ativa', None) and self.janela_texto_ativa.winfo_exists():
+            try: self.salvar_texto_ativo()
+            except: pass
+
+        caminho = fd.asksaveasfilename(defaultextension=".dxf", filetypes=[("DXF (AutoCAD)", "*.dxf")])
+        if not caminho: return
+
+        zf = self.zoom_factor if self.zoom_factor else 1.0
+        linhas = []
+        def add(codigo, valor):
+            linhas.append(str(codigo)); linhas.append(str(valor))
+
+        add(0, "SECTION"); add(2, "ENTITIES")
+        camadas_conhecidas = ('parede', 'porta_linha', 'porta_arco', 'linha_fina', 'linha_tracejada',
+                               'texto', 'esc_arco', 'esc_degrau', 'esc_seta')
+
+        for i in self.canvas.find_withtag("desenho"):
+            if str(self.canvas.itemcget(i, 'state')) == 'hidden': continue
+            tags = self.canvas.gettags(i)
+            if "juncao" in tags: continue
+            tipo = self.canvas.type(i)
+            camada = next((t for t in tags if t in camadas_conhecidas), "0")
+
+            if tipo == 'line':
+                c = self.canvas.coords(i)
+                for k in range(0, len(c) - 2, 2):
+                    x1, y1, x2, y2 = c[k], c[k+1], c[k+2], c[k+3]
+                    add(0, "LINE"); add(8, camada)
+                    add(10, x1/zf); add(20, -y1/zf); add(30, 0.0)
+                    add(11, x2/zf); add(21, -y2/zf); add(31, 0.0)
+
+            elif tipo == 'arc':
+                c = self.canvas.coords(i)
+                if len(c) == 4:
+                    cx, cy = (c[0]+c[2])/2, (c[1]+c[3])/2
+                    r = abs(c[2]-c[0])/2
+                    try:
+                        start = float(self.canvas.itemcget(i, "start"))
+                        extent = float(self.canvas.itemcget(i, "extent"))
+                    except (tk.TclError, ValueError):
+                        start, extent = 0.0, 0.0
+                    if extent >= 0:
+                        ang_ini, ang_fim = start % 360, (start + extent) % 360
+                    else:
+                        ang_ini, ang_fim = (start + extent) % 360, start % 360
+                    add(0, "ARC"); add(8, camada)
+                    add(10, cx/zf); add(20, -cy/zf); add(30, 0.0)
+                    add(40, r/zf)
+                    add(50, ang_ini); add(51, ang_fim)
+
+            elif tipo == 'oval':
+                c = self.canvas.coords(i)
+                if len(c) == 4:
+                    cx, cy = (c[0]+c[2])/2, (c[1]+c[3])/2
+                    r = abs(c[2]-c[0])/2
+                    add(0, "CIRCLE"); add(8, camada)
+                    add(10, cx/zf); add(20, -cy/zf); add(30, 0.0)
+                    add(40, r/zf)
+
+            elif tipo == 'text':
+                texto = self.canvas.itemcget(i, "text")
+                c = self.canvas.coords(i)
+                if not texto or len(c) < 2: continue
+                x, y = c[0], c[1]
+                try:
+                    angulo = float(self.canvas.itemcget(i, "angle") or 0)
+                except (tk.TclError, ValueError):
+                    angulo = 0.0
+                tamanho = 12
+                for t in tags:
+                    if t.startswith("fontsize_"): tamanho = int(t.split("_")[1])
+                add(0, "TEXT"); add(8, camada)
+                add(10, x/zf); add(20, -y/zf); add(30, 0.0)
+                add(40, max(1, tamanho)/zf)
+                add(1, texto)
+                add(50, angulo)
+
+        add(0, "ENDSEC"); add(0, "EOF")
+
+        try:
+            with open(caminho, 'w', encoding='ascii', errors='replace') as f:
+                f.write("\n".join(linhas) + "\n")
+            tk.messagebox.showinfo("Sucesso", "Desenho exportado em DXF com sucesso!")
+        except Exception as e:
+            tk.messagebox.showerror("Erro", f"Falha ao exportar DXF:\n{e}")
+
+    def importar_dxf(self):
+        caminho = fd.askopenfilename(filetypes=[("DXF (AutoCAD)", "*.dxf")])
+        if not caminho: return
+
+        try:
+            with open(caminho, 'r', encoding='utf-8', errors='ignore') as f:
+                linhas = [l.strip() for l in f.readlines()]
+        except Exception as e:
+            tk.messagebox.showerror("Erro", f"Falha ao abrir o DXF:\n{e}")
+            return
+
+        entidades = []
+        atual = None
+        i = 0
+        while i < len(linhas) - 1:
+            codigo, valor = linhas[i], linhas[i+1]
+            i += 2
+            if codigo == "0":
+                if atual: entidades.append(atual)
+                atual = {'tipo': valor, 'campos': {}} if valor in ("LINE", "ARC", "CIRCLE", "TEXT") else None
+                continue
+            if atual is not None:
+                atual['campos'].setdefault(codigo, []).append(valor)
+        if atual: entidades.append(atual)
+
+        if not entidades:
+            tk.messagebox.showwarning("Aviso", "Nenhuma entidade reconhecida (LINE/ARC/CIRCLE/TEXT) foi encontrada nesse DXF.\n"
+                                                "Entidades complexas (POLYLINE, BLOCK, splines, etc.) não são suportadas.")
+            return
+
+        if not tk.messagebox.askyesno("Importar DXF", f"{len(entidades)} entidade(s) encontrada(s). Isso substitui o desenho atual. Continuar?"):
+            return
+
+        self.canvas.delete("desenho")
+        self.historico.clear()
+        self.futuro.clear()
+
+        zf = self.zoom_factor if self.zoom_factor else 1.0
+        cor_linha = self.tema_atual['linha']
+        cor_texto = self.tema_atual['texto']
+        criadas = []
+
+        def num(campos, codigo, indice=0, padrao=0.0):
+            try: return float(campos[codigo][indice])
+            except (KeyError, IndexError, ValueError): return padrao
+
+        for ent in entidades:
+            cp = ent['campos']
+            if ent['tipo'] == "LINE":
+                x1, y1 = num(cp, "10") * zf, -num(cp, "20") * zf
+                x2, y2 = num(cp, "11") * zf, -num(cp, "21") * zf
+                w = self.espessura_fina * zf
+                item = self.canvas.create_line(x1, y1, x2, y2, width=w, fill=cor_linha,
+                                                capstyle=tk.ROUND, joinstyle=tk.ROUND,
+                                                tags=("desenho", "parede", "linha_fina", "tipo_fina", "importado_dxf"))
+                criadas.append(item)
+
+            elif ent['tipo'] == "CIRCLE":
+                cx, cy = num(cp, "10") * zf, -num(cp, "20") * zf
+                r = num(cp, "40") * zf
+                item = self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline=cor_linha, width=2*zf,
+                                                tags=("desenho", "escada_caracol", "importado_dxf"))
+                criadas.append(item)
+
+            elif ent['tipo'] == "ARC":
+                cx, cy = num(cp, "10") * zf, -num(cp, "20") * zf
+                r = num(cp, "40") * zf
+                a1, a2 = num(cp, "50"), num(cp, "51")
+                item = self.canvas.create_arc(cx-r, cy-r, cx+r, cy+r, start=a1, extent=(a2 - a1) % 360,
+                                               style=tk.ARC, outline=cor_linha, width=2*zf,
+                                               tags=("desenho", "porta", "porta_arco", "tipo_arco", "importado_dxf"))
+                criadas.append(item)
+
+            elif ent['tipo'] == "TEXT":
+                x, y = num(cp, "10") * zf, -num(cp, "20") * zf
+                texto = cp.get("1", [""])[0]
+                if not texto: continue
+                tamanho = int(num(cp, "40", padrao=12)) or 12
+                angulo = num(cp, "50")
+                tam_zoom = max(1, int(tamanho * zf))
+                item = self.canvas.create_text(x, y, text=texto, font=("Arial", tam_zoom, "bold"), angle=angulo,
+                                                fill=cor_texto, tags=("desenho", "texto", f"fontsize_{tamanho}", "importado_dxf"),
+                                                justify=tk.CENTER)
+                criadas.append(item)
+
+        if criadas:
+            self.registrar_acao({'tipo': 'add', 'itens': criadas})
+        self.atualizar_todas_juncoes()
+        tk.messagebox.showinfo("Sucesso", f"{len(criadas)} entidade(s) importada(s) do DXF.")
 
     def exportar_png(self):
         if not TEM_PILLOW: return

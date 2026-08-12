@@ -80,6 +80,38 @@ Tudo está em um único arquivo: `GeradorPlantaBaixa.py`, classe `CroquiApp`.
   customizada levam a tag `custom_color`, que faz `alternar_modo_noturno`
   pular a recoloração automática desses itens ao trocar de tema.
 
+## Salvar / Abrir / Exportar
+
+- **Salvar Projeto / Abrir Projeto** (`salvar_arquivo`/`abrir_arquivo`, atalhos
+  Ctrl+S/Ctrl+O): formato próprio `.croqui`, um JSON simples com
+  `zoom_factor`, `grid_size`, `block_counter`, `modo_noturno` e a lista de
+  itens do canvas serializados via `serializar_item`/`recriar_item`. A
+  serialização é genérica: para cada item visível com a tag `desenho`
+  (exceto `juncao`, que é recalculada), grava `tipo` (`canvas.type`),
+  `coords` e todas as opções retornadas por `canvas.itemconfig(item)`
+  (fill, width, dash, font, angle, justify, etc.), então recria o item na
+  volta chamando o `create_<tipo>` correspondente com essas mesmas opções.
+  Isso preserva fielmente cor, rotação, tamanho de fonte e blocos
+  (`bloco_N`), mas **não preserva o histórico de undo/redo** — abrir um
+  projeto limpa `self.historico`/`self.futuro`.
+- **Exportar DXF / Importar DXF** (`exportar_dxf`/`importar_dxf`):
+  formato aberto de troca de desenhos da Autodesk (texto simples), que o
+  AutoCAD e outros CADs importam nativamente — ao contrário do `.dwg`
+  (binário, proprietário, inviável de implementar sem SDK pago). Gera um
+  DXF mínimo (`SECTION ENTITIES` ... `ENDSEC EOF`) mapeando: paredes/linhas
+  → `LINE`, arcos de porta → `ARC`, círculos de escada caracol → `CIRCLE`,
+  textos → `TEXT` (com rotação no grupo 50). As coordenadas são divididas
+  por `zoom_factor` (que cresce/decresce junto com `grid_size`, então
+  `coord / zoom_factor` dá a posição "lógica" independente do zoom atual)
+  e o eixo Y é invertido (`-y`) porque o canvas do Tk cresce para baixo
+  enquanto DXF/CAD usam Y crescendo para cima; os ângulos de arco/texto já
+  são gravados na mesma convenção CCW visual usada internamente pelo app,
+  então não precisam de ajuste de sinal. A importação é um parser DXF
+  simplificado (só entende `LINE`/`ARC`/`CIRCLE`/`TEXT`; ignora
+  `POLYLINE`, blocos, splines etc. com aviso) — feito para reabrir DXFs
+  exportados pelo próprio app e, de forma best-effort, DXFs simples vindos
+  de outros programas.
+
 ## Convenções
 
 - Nomes de métodos/variáveis em português, seguindo o padrão já existente

@@ -1,6 +1,7 @@
 import tkinter as tk
 import tkinter.simpledialog as sd
 import tkinter.filedialog as fd
+import tkinter.colorchooser as cc
 import math
 
 # --- CORREÇÃO DE DPI PARA MÚLTIPLOS MONITORES NO WINDOWS ---
@@ -228,7 +229,7 @@ class CroquiApp:
         elif char == 'b': self.set_ferramenta('borracha')
 
     # --- TEXTO AUTOMÁTICO - FIX SINGLETON ---
-    def abrir_caixa_texto(self, x_tela, y_tela, x_canvas, y_canvas, item_editar=None):
+    def abrir_caixa_texto(self, x_tela, y_tela, x_canvas, y_canvas, item_id=None):
         # Garante que se tiver outra caixa aberta, ela seja salva e fechada
         if getattr(self, 'janela_texto_ativa', None) and self.janela_texto_ativa.winfo_exists():
             try:
@@ -238,37 +239,63 @@ class CroquiApp:
 
         top = tk.Toplevel(self.root)
         self.janela_texto_ativa = top
-        top.title("Editar Texto" if item_editar else "Texto")
+        top.title("Editar Texto" if item_id else "Texto")
         top.geometry(f"+{x_tela}+{y_tela}")
         top.attributes('-topmost', True)
 
-        txt = tk.Text(top, width=22, height=3, font=("Arial", 11), wrap=tk.WORD)
-        txt.pack(padx=5, pady=5)
+        picking_color = False
 
+        texto_ini = ""
         tamanho_inicial = self.ultimo_tamanho_fonte
         angulo_inicial = self.ultima_rotacao_texto
+        cor_ini = self.tema_atual['texto']
+        is_custom = False
 
-        if item_editar:
-            texto_atual = self.canvas.itemcget(item_editar, "text")
-            txt.insert("1.0", texto_atual)
-            for t in self.canvas.gettags(item_editar):
-                if t.startswith("fontsize_"):
-                    tamanho_inicial = int(t.split("_")[1])
-            try:
-                angulo_inicial = int(float(self.canvas.itemcget(item_editar, "angle") or 0))
-            except (tk.TclError, ValueError):
-                angulo_inicial = 0
+        if item_id:
+            estado = self.capturar_estado_texto(item_id)
+            texto_ini = estado['texto']
+            tamanho_inicial = estado['tamanho']
+            angulo_inicial = int(estado['angulo'])
+            cor_ini = estado['cor']
+            is_custom = estado['custom']
 
+        txt = tk.Text(top, width=22, height=3, font=("Arial", 11), wrap=tk.WORD)
+        txt.insert("1.0", texto_ini)
+        txt.pack(padx=5, pady=5)
         txt.focus_force()
         txt.tag_add("sel", "1.0", tk.END)
 
         frame_ctrl = tk.Frame(top)
         frame_ctrl.pack(fill=tk.X, padx=5, pady=(0,2))
 
-        tk.Label(frame_ctrl, text="Tamanho:").pack(side=tk.LEFT)
+        tk.Label(frame_ctrl, text="Tam:").pack(side=tk.LEFT)
         var_tamanho = tk.IntVar(value=tamanho_inicial)
         spin_tam = tk.Spinbox(frame_ctrl, from_=6, to=72, textvariable=var_tamanho, width=5)
         spin_tam.pack(side=tk.LEFT, padx=(5,5))
+
+        var_cor = tk.StringVar(value=cor_ini)
+        var_custom = tk.BooleanVar(value=is_custom)
+
+        def escolher_cor():
+            nonlocal picking_color
+            picking_color = True
+            c = cc.askcolor(color=var_cor.get(), title="Cor do Texto")[1]
+            picking_color = False
+            if not top.winfo_exists(): return
+            if c:
+                var_cor.set(c)
+                var_custom.set(True)
+                btn_cor.config(bg=c)
+            txt.focus_force()
+
+        def reset_cor():
+            var_custom.set(False)
+            var_cor.set(self.tema_atual['texto'])
+            btn_cor.config(bg="#f0f0f0")
+
+        btn_cor = tk.Button(frame_ctrl, text="Cor", command=escolher_cor, bg=cor_ini if is_custom else "#f0f0f0", width=4)
+        btn_cor.pack(side=tk.LEFT, padx=2)
+        tk.Button(frame_ctrl, text="Auto", command=reset_cor, font=("Arial", 8)).pack(side=tk.LEFT)
 
         frame_ctrl2 = tk.Frame(top)
         frame_ctrl2.pack(fill=tk.X, padx=5, pady=(0,5))
@@ -293,58 +320,50 @@ class CroquiApp:
                 angulo = var_angulo.get() % 360
             except tk.TclError:
                 angulo = angulo_inicial
+            cor_final = var_cor.get()
+            usar_custom = var_custom.get()
 
             self.ultimo_tamanho_fonte = tamanho
             self.ultima_rotacao_texto = angulo
 
             self.janela_texto_ativa = None
             self.salvar_texto_ativo = None
-
             top.destroy()
 
-            if item_editar:
-                if not conteudo:
-                    if str(self.canvas.itemcget(item_editar, 'state')) != 'hidden':
-                        self.canvas.itemconfig(item_editar, state='hidden')
-                        self.registrar_acao({'tipo': 'delete', 'itens': [item_editar]})
-                    return
+            if not conteudo:
+                if item_id and str(self.canvas.itemcget(item_id, 'state')) != 'hidden':
+                    self.canvas.itemconfig(item_id, state='hidden')
+                    self.registrar_acao({'tipo': 'delete', 'itens': [item_id]})
+                return
 
-                texto_antigo = self.canvas.itemcget(item_editar, "text")
-                tags_antigas = self.canvas.gettags(item_editar)
-                tam_antigo = 12
-                for t in tags_antigas:
-                    if t.startswith("fontsize_"): tam_antigo = int(t.split("_")[1])
-                try:
-                    ang_antigo = float(self.canvas.itemcget(item_editar, "angle") or 0)
-                except (tk.TclError, ValueError):
-                    ang_antigo = 0
+            dados_novos = {'texto': conteudo, 'tamanho': tamanho, 'angulo': angulo, 'cor': cor_final, 'custom': usar_custom}
 
-                self.aplicar_estado_texto(item_editar, {'texto': conteudo, 'tamanho': tamanho, 'angulo': angulo})
-
-                self.registrar_acao({
-                    'tipo': 'edit_texto', 'item': item_editar,
-                    'antes': {'texto': texto_antigo, 'tamanho': tam_antigo, 'angulo': ang_antigo},
-                    'depois': {'texto': conteudo, 'tamanho': tamanho, 'angulo': angulo}
-                })
-            elif conteudo:
+            if item_id:
+                dados_antigos = self.capturar_estado_texto(item_id)
+                self.aplicar_estado_texto(item_id, dados_novos)
+                self.registrar_acao({'tipo': 'edit_texto', 'item': item_id, 'antes': dados_antigos, 'depois': dados_novos})
+            else:
                 tam_zoom = max(1, int(tamanho * self.zoom_factor))
+                tags_novas = ["desenho", "texto", f"fontsize_{tamanho}"]
+                if usar_custom: tags_novas.append("custom_color")
                 id_texto = self.canvas.create_text(
                     x_canvas, y_canvas,
                     text=conteudo,
                     font=("Arial", tam_zoom, "bold"),
                     angle=angulo,
-                    fill=self.tema_atual['texto'],
-                    tags=("desenho", "texto", f"fontsize_{tamanho}"),
+                    fill=cor_final,
+                    tags=tuple(tags_novas),
                     justify=tk.CENTER
                 )
                 self.registrar_acao({'tipo': 'add', 'itens': [id_texto]})
 
         self.salvar_texto_ativo = salvar
-        
+
         def on_focus_out(event):
             top.after(150, check_focus)
-            
+
         def check_focus():
+            if picking_color: return
             try:
                 focused = self.root.focus_get()
                 if focused is None or not str(focused).startswith(str(top)):
@@ -360,14 +379,32 @@ class CroquiApp:
         txt.bind("<Return>", on_enter)
         top.bind("<Escape>", lambda e: top.destroy())
 
+    def capturar_estado_texto(self, item):
+        tags = self.canvas.gettags(item)
+        tamanho = 12
+        for t in tags:
+            if t.startswith("fontsize_"): tamanho = int(t.split("_")[1])
+        try:
+            angulo = float(self.canvas.itemcget(item, "angle") or 0)
+        except (tk.TclError, ValueError):
+            angulo = 0
+        return {
+            'texto': self.canvas.itemcget(item, "text"),
+            'tamanho': tamanho,
+            'angulo': angulo,
+            'cor': self.canvas.itemcget(item, "fill"),
+            'custom': "custom_color" in tags
+        }
+
     def aplicar_estado_texto(self, item, dados):
         tam_zoom = max(1, int(dados['tamanho'] * self.zoom_factor))
-        self.canvas.itemconfig(item, text=dados['texto'], font=("Arial", tam_zoom, "bold"), angle=dados['angulo'])
+        self.canvas.itemconfig(item, text=dados['texto'], font=("Arial", tam_zoom, "bold"), angle=dados['angulo'], fill=dados['cor'])
         if str(self.canvas.itemcget(item, 'state')) == 'hidden':
             self.canvas.itemconfig(item, state='normal')
-        tags_atuais = self.canvas.gettags(item)
-        novas_tags = tuple(t for t in tags_atuais if not t.startswith("fontsize_")) + (f"fontsize_{dados['tamanho']}",)
-        self.canvas.itemconfig(item, tags=novas_tags)
+        tags_atuais = [t for t in self.canvas.gettags(item) if not t.startswith("fontsize_") and t != "custom_color"]
+        tags_atuais.append(f"fontsize_{dados['tamanho']}")
+        if dados['custom']: tags_atuais.append("custom_color")
+        self.canvas.itemconfig(item, tags=tuple(tags_atuais))
 
     def duplo_clique_texto(self, event):
         cx, cy = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
@@ -379,7 +416,7 @@ class CroquiApp:
                 item_texto = i
                 break
         if item_texto:
-            self.abrir_caixa_texto(event.x_root, event.y_root, 0, 0, item_editar=item_texto)
+            self.abrir_caixa_texto(event.x_root, event.y_root, 0, 0, item_id=item_texto)
 
     def atualizar_todas_juncoes(self):
         self.canvas.delete("juncao")
@@ -585,7 +622,9 @@ class CroquiApp:
         for i in self.canvas.find_withtag("parede"): self.canvas.itemconfig(i, fill=self.tema_atual['linha'])
         for i in self.canvas.find_withtag("linha_tracejada"): self.canvas.itemconfig(i, fill=self.tema_atual['linha'])
         for i in self.canvas.find_withtag("juncao"): self.canvas.itemconfig(i, fill=self.tema_atual['linha'], outline="")
-        for i in self.canvas.find_withtag("texto"): self.canvas.itemconfig(i, fill=self.tema_atual['texto'])
+        for i in self.canvas.find_withtag("texto"): 
+            if "custom_color" not in self.canvas.gettags(i):
+                self.canvas.itemconfig(i, fill=self.tema_atual['texto'])
         for i in self.canvas.find_withtag("porta"):
             if self.canvas.type(i) == "line": self.canvas.itemconfig(i, fill=self.tema_atual['linha'])
             elif self.canvas.type(i) == "arc": self.canvas.itemconfig(i, outline=self.tema_atual['porta'])
@@ -709,10 +748,13 @@ class CroquiApp:
             self.executar_trim(event)
         
         elif self.ferramenta_atual == 'texto':
-            itens = self.canvas.find_overlapping(cx-10, cy-10, cx+10, cy+10)
-            sobre_texto = any("texto" in self.canvas.gettags(i) and str(self.canvas.itemcget(i, 'state')) != 'hidden' for i in itens)
-            if not sobre_texto:
-                self.abrir_caixa_texto(event.x_root, event.y_root, x_s, y_s)
+            item_clicado = None
+            # Verifica se clicou em texto existente para editar
+            for i in self.canvas.find_overlapping(cx-5, cy-5, cx+5, cy+5):
+                if self.canvas.type(i) == "text" and str(self.canvas.itemcget(i, 'state')) != 'hidden':
+                    item_clicado = i
+                    break
+            self.abrir_caixa_texto(event.x_root, event.y_root, x_s, y_s, item_id=item_clicado)
         
         elif self.ferramenta_atual == 'mover_objeto':
             itens = self.canvas.find_overlapping(cx-10, cy-10, cx+10, cy+10)

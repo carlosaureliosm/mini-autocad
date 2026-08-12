@@ -55,23 +55,30 @@ Tudo está em um único arquivo: `GeradorPlantaBaixa.py`, classe `CroquiApp`.
 
 ## Texto
 
-- Clique com a ferramenta "Texto" ativa (e fora de um texto já existente)
-  abre uma caixa (`abrir_caixa_texto`) para digitar o conteúdo, escolher o
-  **tamanho da fonte** e a **rotação** (0–359°, usando a opção `angle` dos
-  itens de texto do canvas, suportada desde Tk 8.6).
-- **Duplo clique** sobre qualquer texto já inserido — com qualquer
-  ferramenta ativa — abre a mesma caixa pré-preenchida com o texto, tamanho
-  e rotação atuais para edição (`duplo_clique_texto`). Salvar com o campo
-  vazio apaga o texto (via ação `delete` do histórico).
+- Clique com a ferramenta "Texto" ativa abre uma caixa (`abrir_caixa_texto`)
+  para digitar o conteúdo e escolher **tamanho da fonte**, **cor** (botão
+  "Cor" com seletor do sistema, ou "Auto" para voltar à cor do tema) e
+  **rotação** (0–359°, via opção `angle` dos itens de texto do canvas,
+  suportada desde Tk 8.6).
+- Clicar em cima de um texto já existente com a ferramenta "Texto" (clique
+  único), ou dar **duplo clique** sobre qualquer texto já inserido — com
+  qualquer ferramenta ativa —, abre a mesma caixa pré-preenchida com o
+  texto, tamanho, cor e rotação atuais para edição
+  (`duplo_clique_texto`/`clicar`). Salvar com o campo vazio apaga o texto
+  (via ação `delete` do histórico).
 - O último tamanho de fonte e a última rotação usados ficam guardados em
   `self.ultimo_tamanho_fonte` / `self.ultima_rotacao_texto` e pré-preenchem
-  a próxima caixa de texto criada.
+  a próxima caixa de texto criada. A cor não é memorizada entre inserções:
+  por padrão cada texto novo usa a cor do tema atual (dia/noite), a menos
+  que uma cor customizada seja escolhida para ele.
 - Edições de texto existente geram uma ação `edit_texto` no histórico
-  (guarda estado "antes" e "depois" de texto/tamanho/ângulo) para suportar
-  undo/redo (`aplicar_estado_texto`).
+  (guarda estado "antes" e "depois" de texto/tamanho/ângulo/cor via
+  `capturar_estado_texto`) para suportar undo/redo (`aplicar_estado_texto`).
 - O tamanho de fonte "base" (sem zoom) fica guardado na tag
   `fontsize_<N>` de cada item de texto; `aplicar_zoom` recalcula o tamanho
-  visível multiplicando pelo `zoom_factor` atual.
+  visível multiplicando pelo `zoom_factor` atual. Textos com cor
+  customizada levam a tag `custom_color`, que faz `alternar_modo_noturno`
+  pular a recoloração automática desses itens ao trocar de tema.
 
 ## Convenções
 
